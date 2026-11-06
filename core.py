@@ -147,7 +147,7 @@ class Bakeoff:
         both = sum(a[x]['passed'] and b[x]['passed'] for x in shared)
         a_only = sum(a[x]['passed'] and not b[x]['passed'] for x in shared)
         b_only = sum(b[x]['passed'] and not a[x]['passed'] for x in shared)
-        return {'model_a': model_a, 'model_b': model_b, 'shared_task_ids': shared,
+        return {'model_a': model_a, 'model_b': model_b, 'status': 'comparable' if shared else 'no_shared_tasks', 'shared_task_ids': shared,
                 'a_only_task_ids': [x for x in task_ids if x in a and x not in b],
                 'b_only_task_ids': [x for x in task_ids if x in b and x not in a],
                 'neither_task_ids': [x for x in task_ids if x not in a and x not in b],
