@@ -10,4 +10,5 @@ provides_tools:
   - bakeoff_report
   - bakeoff_run_ollama
   - bakeoff_abandon
+  - bakeoff_recover_pending
   - bakeoff_result

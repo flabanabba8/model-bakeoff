@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import fcntl
 from pathlib import Path
 import tempfile
 import unittest
@@ -45,6 +46,19 @@ class BakeoffTests(unittest.TestCase):
         self.assertEqual(detail['result']['origin'], 'manual')
         with self.assertRaisesRegex(ValueError, 'No result'):
             self.plugin.result(self.id, 'b', 'model-a')
+
+    def test_pending_recovery_requires_released_execution_lock(self):
+        path = self.plugin.path(self.id)
+        data = self.plugin.load(path)
+        data['attempts'].append({'id': 'fixture', 'model': 'model-a', 'task_id': 'a', 'status': 'pending', 'seed': 0, 'lock_version': 1})
+        self.plugin.save(path, data)
+        with (self.root / (self.id + '.run.lock')).open('a') as active:
+            fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(ValueError, 'still active'):
+                self.plugin.recover_pending(self.id)
+        self.assertEqual(self.plugin.recover_pending(self.id)['status'], 'unknown')
+        self.assertEqual(self.plugin.report(self.id)['attempts'][0]['status'], 'unknown')
+        self.plugin.abandon(self.id, 'a', 'model-a', 'Reviewed the server')
 
 if __name__ == '__main__':
     unittest.main()

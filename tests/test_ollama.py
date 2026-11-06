@@ -78,6 +78,8 @@ class OllamaTests(unittest.TestCase):
         self.plugin.save(path, data)
         with self.assertRaisesRegex(ValueError, 'still pending'):
             module.execute(self.plugin, self.id, 'b', 'second', base_url=self.url)
+        with self.assertRaisesRegex(ValueError, 'older records'):
+            self.plugin.recover_pending(self.id)
         self.assertEqual(Fixture.requests, 0)
 
     def test_hostname_resolution_cannot_connect_to_remote_address(self):

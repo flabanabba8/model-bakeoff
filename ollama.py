@@ -45,6 +45,14 @@ class LoopbackConnection(http.client.HTTPConnection):
 
 
 def execute(bakeoff, bakeoff_id, task_id, model, base_url='http://localhost:11434', seed=0):
+    bakeoff.path(bakeoff_id)  # Validate before using the ID in a lock filename.
+    with (bakeoff.root / (bakeoff_id + '.run.lock')).open('a') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise ValueError('Another local model run is active for this bakeoff') from None
+        return _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed)
+
+
+def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
     bounded(model, 'model label', 200)
     bounded(task_id, 'task ID', 100)
     if type(seed) is not int or not 0 <= seed <= 2**31-1: raise ValueError('Seed must be a nonnegative 32-bit integer')
@@ -61,7 +69,7 @@ def execute(bakeoff, bakeoff_id, task_id, model, base_url='http://localhost:1143
             raise ValueError('Another model run is still pending for this bakeoff')
         if any(x['model'] == model and x['task_id'] == task_id and x['status'] in ('pending', 'unknown') for x in attempts):
             raise ValueError('A prior run has an unresolved outcome; do not automatically retry')
-        attempt = {'id': uuid.uuid4().hex, 'model': model, 'task_id': task_id, 'status': 'pending', 'seed': seed}
+        attempt = {'id': uuid.uuid4().hex, 'model': model, 'task_id': task_id, 'status': 'pending', 'seed': seed, 'lock_version': 1}
         attempts.append(attempt)
         bakeoff.save(path, data)
     started = time.monotonic()

@@ -91,6 +91,22 @@ class Bakeoff:
             self.save(path, data)
         return {'model': model, 'task_id': task_id, 'status': 'abandoned', 'notice': 'No model request was made. A new run requires a separate explicit action.'}
 
+    def recover_pending(self, bakeoff_id):
+        path = self.path(bakeoff_id)
+        with (self.root / (bakeoff_id + '.run.lock')).open('a') as active:
+            try: fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: raise ValueError('A local model run is still active') from None
+            with (self.root / '.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                data = self.load(path)
+                pending = [x for x in data.get('attempts', []) if x['status'] == 'pending']
+                if len(pending) != 1 or pending[0].get('lock_version') != 1:
+                    raise ValueError('No single recoverable pending run; older records need a new bakeoff')
+                pending[0]['status'] = 'unknown'
+                self.save(path, data)
+        return {'model': pending[0]['model'], 'task_id': pending[0]['task_id'], 'status': 'unknown',
+                'notice': 'No request was sent. The server may still be generating; review it before explicitly abandoning or retrying.'}
+
     def report(self, bakeoff_id):
         data = self.load(self.path(bakeoff_id))
         report = []
