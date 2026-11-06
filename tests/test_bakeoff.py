@@ -30,6 +30,17 @@ class BakeoffTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'already'):
             self.plugin.record(self.id, 'a', 'model-a', 'yes')
 
+    def test_paired_comparison_excludes_unshared_tasks(self):
+        self.plugin.record(self.id, 'a', 'model-a', 'yes')
+        self.plugin.record(self.id, 'b', 'model-a', 'hello')
+        self.plugin.record(self.id, 'a', 'model-b', 'no')
+        result = self.plugin.compare(self.id, 'model-a', 'model-b')
+        self.assertEqual(result['shared_task_ids'], ['a'])
+        self.assertEqual(result['a_only_task_ids'], ['b'])
+        self.assertEqual((result['only_a_passed'], result['only_b_passed']), (1, 0))
+        with self.assertRaises(ValueError): self.plugin.compare(self.id, 'model-a', 'model-a')
+        with self.assertRaises(ValueError): self.plugin.compare(self.id, 'model-a', 'unknown')
+
     def test_tampered_tasks_rejected(self):
         path = self.root / (self.id + '.json')
         data = json.loads(path.read_text())
