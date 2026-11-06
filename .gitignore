@@ -4,6 +4,17 @@ __pycache__/
 outputs/
 .env
 .env.*
+.netrc
+.npmrc
+.pypirc
+.git-credentials
+credentials.json
+secrets.json
+token.json
 *.pem
 *.key
+*.p12
+*.pfx
+*.keystore
+*.jks
 native/build/
