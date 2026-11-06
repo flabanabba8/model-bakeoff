@@ -27,7 +27,7 @@ class Bakeoff:
     def save(self, path, data):
         temp = self.root / (uuid.uuid4().hex + '.tmp')
         try:
-            with temp.open('x', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False)
+            with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False)
             os.replace(temp, path)
         finally:
             temp.unlink(missing_ok=True)

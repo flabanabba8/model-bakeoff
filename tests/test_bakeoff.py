@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import fcntl
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -29,6 +30,17 @@ class BakeoffTests(unittest.TestCase):
         self.assertEqual(report[1]['missing_task_ids'], ['b'])
         with self.assertRaisesRegex(ValueError, 'already'):
             self.plugin.record(self.id, 'a', 'model-a', 'yes')
+
+    def test_new_and_updated_results_are_private_under_permissive_umask(self):
+        previous = os.umask(0)
+        try:
+            ident = self.plugin.create(self.tasks)['bakeoff_id']
+            path = self.plugin.path(ident)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.plugin.record(ident, 'a', 'model-a', 'yes')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        finally:
+            os.umask(previous)
 
     def test_paired_comparison_excludes_unshared_tasks(self):
         self.plugin.record(self.id, 'a', 'model-a', 'yes')
