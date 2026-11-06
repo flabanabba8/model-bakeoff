@@ -1,0 +1,13 @@
+name: model-bakeoff
+version: "0.1.0"
+description: "Compare recorded model outputs on a fixed set of deterministic checks."
+author: "Model Bakeoff contributors"
+license: GPL-3.0-or-later
+requires_hermes: ">=0.22.0"
+provides_tools:
+  - bakeoff_create
+  - bakeoff_record
+  - bakeoff_report
+  - bakeoff_run_ollama
+  - bakeoff_abandon
+  - bakeoff_result
