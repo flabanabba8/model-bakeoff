@@ -82,6 +82,23 @@ class OllamaTests(unittest.TestCase):
             self.plugin.recover_pending(self.id)
         self.assertEqual(Fixture.requests, 0)
 
+    def test_live_execution_holds_recovery_lock(self):
+        entered, release, outcomes = threading.Event(), threading.Event(), []
+        def work(*args):
+            entered.set()
+            if not release.wait(5): raise RuntimeError('fixture timed out')
+            return {'status': 'fixture complete'}
+        with patch.object(module.ollama, '_execute', side_effect=work):
+            thread = threading.Thread(target=lambda: outcomes.append(module.execute(self.plugin, self.id, 'a', 'fixture-model', base_url=self.url)))
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                with self.assertRaisesRegex(ValueError, 'still active'):
+                    self.plugin.recover_pending(self.id)
+            finally:
+                release.set(); thread.join(timeout=5)
+        self.assertEqual(outcomes, [{'status': 'fixture complete'}])
+
     def test_hostname_resolution_cannot_connect_to_remote_address(self):
         remote = str(ipaddress.IPv4Address(0x08080808))
         address = [(module.ollama.socket.AF_INET, module.ollama.socket.SOCK_STREAM, 6, '', (remote, 11434))]

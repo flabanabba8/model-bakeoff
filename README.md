@@ -6,4 +6,4 @@ Local model calls are restricted to a loopback HTTP server. Each tool call sends
 
 Literal checks are not semantic quality judgments. A seed and zero temperature are requested, but reproducibility and model identity depend on the server and model implementation. Wall time includes model loading and transport, so compare equivalent warm/cold conditions. Manual results and timings are user-supplied, and provider token counts are reported rather than independently verified. Prompts and answers remain in the private Hermes plugin data directory and may contain sensitive content.
 
-Nine tests include a real local HTTP protocol fixture, failure recovery and remote-endpoint rejection. No actual Ollama model or production benchmark has been run.
+Ten tests include a real local HTTP protocol fixture, failure recovery and remote-endpoint rejection. No actual Ollama model or production benchmark has been run.
