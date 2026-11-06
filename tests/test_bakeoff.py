@@ -59,6 +59,10 @@ class BakeoffTests(unittest.TestCase):
         self.assertEqual(self.plugin.recover_pending(self.id)['status'], 'unknown')
         self.assertEqual(self.plugin.report(self.id)['attempts'][0]['status'], 'unknown')
         self.plugin.abandon(self.id, 'a', 'model-a', 'Reviewed the server')
+        missing = 'a' * 32
+        with self.assertRaisesRegex(ValueError, 'Unknown bakeoff'):
+            self.plugin.recover_pending(missing)
+        self.assertFalse((self.root / (missing + '.run.lock')).exists())
 
 if __name__ == '__main__':
     unittest.main()

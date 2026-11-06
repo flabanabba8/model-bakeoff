@@ -45,7 +45,8 @@ class LoopbackConnection(http.client.HTTPConnection):
 
 
 def execute(bakeoff, bakeoff_id, task_id, model, base_url='http://localhost:11434', seed=0):
-    bakeoff.path(bakeoff_id)  # Validate before using the ID in a lock filename.
+    path = bakeoff.path(bakeoff_id)  # Validate before using the ID in a lock filename.
+    if not path.is_file(): raise ValueError('Unknown bakeoff')
     with (bakeoff.root / (bakeoff_id + '.run.lock')).open('a') as lock:
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise ValueError('Another local model run is active for this bakeoff') from None

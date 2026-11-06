@@ -93,6 +93,7 @@ class Bakeoff:
 
     def recover_pending(self, bakeoff_id):
         path = self.path(bakeoff_id)
+        if not path.is_file(): raise ValueError('Unknown bakeoff')
         with (self.root / (bakeoff_id + '.run.lock')).open('a') as active:
             try: fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError: raise ValueError('A local model run is still active') from None
