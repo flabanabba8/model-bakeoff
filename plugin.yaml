@@ -9,7 +9,7 @@ provides_tools:
   - bakeoff_record
   - bakeoff_report
   - bakeoff_compare
-  - bakeoff_run_ollama
+  - bakeoff_run_local
   - bakeoff_abandon
   - bakeoff_recover_pending
   - bakeoff_result

@@ -115,7 +115,7 @@ class Bakeoff:
                            'reported_input_tokens': sum(x['input_tokens'] for x in tokens), 'reported_output_tokens': sum(x['output_tokens'] for x in tokens), 'token_samples': len(tokens)})
         return {'task_set_sha256': data['fingerprint'], 'task_count': len(data['tasks']), 'models': report,
                 'attempts': [{k: x[k] for k in ('model', 'task_id', 'status', 'seed')} for x in data.get('attempts', [])],
-                'notice': 'Manual results and timing are externally supplied; local Ollama timings are measured. Checks are literal and do not measure general quality; compare only equivalent runs and review missing data.'}
+                'notice': 'Manual results and timing are externally supplied; local-server timings are measured. Checks are literal and do not measure general quality; compare only equivalent runs and review missing data.'}
 
     def result(self, bakeoff_id, task_id, model):
         bounded(task_id, 'task ID', 100)

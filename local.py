@@ -1,4 +1,4 @@
-"""One explicit local Ollama inference at a time with durable outcome receipts."""
+"""One explicit local model inference at a time (OpenAI-compatible or Ollama API) with durable outcome receipts."""
 import http.client
 import ipaddress
 import json
@@ -10,7 +10,7 @@ from .core import Bakeoff, bounded
 from . import locking
 
 
-def local_endpoint(value):
+def local_endpoint(value, default_port=11434):
     parsed = urlsplit(value)
     host = parsed.hostname
     if host == 'localhost':
@@ -19,8 +19,8 @@ def local_endpoint(value):
         try: local = ipaddress.ip_address(host).is_loopback
         except (ValueError, TypeError): local = False
     if parsed.scheme != 'http' or not local or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
-        raise ValueError('Use a loopback-only HTTP Ollama origin')
-    return host, parsed.port or 11434
+        raise ValueError('Use a loopback-only HTTP origin for the local model server')
+    return host, parsed.port or default_port
 
 
 class LoopbackConnection(http.client.HTTPConnection):
@@ -44,18 +44,22 @@ class LoopbackConnection(http.client.HTTPConnection):
         raise OSError('No reachable loopback address') from last_error
 
 
-def execute(bakeoff, bakeoff_id, task_id, model, base_url='http://localhost:11434', seed=0):
+def execute(bakeoff, bakeoff_id, task_id, model, base_url=None, seed=0, api='openai', timeout_seconds=120, max_tokens=2048):
     path = bakeoff.path(bakeoff_id)  # Validate before using the ID in a lock filename.
     if not path.is_file(): raise ValueError('Unknown bakeoff')
     with locking.exclusive_lock(bakeoff.root / (bakeoff_id + '.run.lock'), 'Another local model run is active for this bakeoff', error=ValueError):
-        return _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed)
+        return _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed, api, timeout_seconds, max_tokens)
 
 
-def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
+def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed, api, timeout_seconds, max_tokens):
     bounded(model, 'model label', 200)
     bounded(task_id, 'task ID', 100)
     if type(seed) is not int or not 0 <= seed <= 2**31-1: raise ValueError('Seed must be a nonnegative 32-bit integer')
-    host, port = local_endpoint(base_url)
+    if api not in ('ollama', 'openai'): raise ValueError('api must be "ollama" (/api/generate) or "openai" (/v1/chat/completions, as served by llama.cpp, LM Studio, vLLM)')
+    if type(timeout_seconds) not in (int, float) or not 10 <= timeout_seconds <= 3600: raise ValueError('timeout_seconds must be 10 to 3600')
+    if type(max_tokens) is not int or not 16 <= max_tokens <= 32768: raise ValueError('max_tokens must be 16 to 32768')
+    if base_url is None: base_url = 'http://localhost:8080' if api == 'openai' else 'http://localhost:11434'
+    host, port = local_endpoint(base_url, 11434 if api == 'ollama' else 8080)
     path = bakeoff.path(bakeoff_id)
     with locking.exclusive_lock(bakeoff.root / '.lock', 'Benchmark state is busy', blocking=True):
         data = bakeoff.load(path)
@@ -72,11 +76,17 @@ def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
         bakeoff.save(path, data)
     started = time.monotonic()
     try:
-        connection = LoopbackConnection(host, port, timeout=120)
+        connection = LoopbackConnection(host, port, timeout=timeout_seconds)
         try:
-            payload = json.dumps({'model': model, 'prompt': task['prompt'], 'stream': False,
-                                  'options': {'seed': seed, 'temperature': 0}}).encode()
-            connection.request('POST', '/api/generate', body=payload, headers={'Content-Type': 'application/json', 'Connection': 'close'})
+            if api == 'ollama':
+                payload = json.dumps({'model': model, 'prompt': task['prompt'], 'stream': False,
+                                      'options': {'seed': seed, 'temperature': 0}}).encode()
+                endpoint = '/api/generate'
+            else:
+                payload = json.dumps({'model': model, 'messages': [{'role': 'user', 'content': task['prompt']}], 'stream': False,
+                                      'temperature': 0, 'seed': seed, 'max_tokens': max_tokens}).encode()
+                endpoint = '/v1/chat/completions'
+            connection.request('POST', endpoint, body=payload, headers={'Content-Type': 'application/json', 'Connection': 'close'})
             response = connection.getresponse()
             if response.status != 200: raise ValueError('Server did not accept the request')
             raw = response.read(4 * 1024**2 + 1)
@@ -84,11 +94,21 @@ def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
             result = json.loads(raw)
         finally:
             connection.close()
-        if not isinstance(result, dict) or result.get('done') is not True or not isinstance(result.get('response'), str) or len(result['response']) > 100000:
-            raise ValueError('Incomplete model response')
+        if api == 'ollama':
+            if not isinstance(result, dict) or result.get('done') is not True or not isinstance(result.get('response'), str) or len(result['response']) > 100000:
+                raise ValueError('Incomplete model response')
+            answer, keys = result['response'], ('prompt_eval_count', 'eval_count')
+            container = result
+        else:
+            choice = result['choices'][0] if isinstance(result, dict) and isinstance(result.get('choices'), list) and result['choices'] else None
+            if not isinstance(choice, dict) or choice.get('finish_reason') != 'stop' or not isinstance(choice.get('message'), dict) or not isinstance(choice['message'].get('content'), str) or len(choice['message']['content']) > 100000:
+                raise ValueError('Incomplete model response')
+            answer, keys = choice['message']['content'], ('prompt_tokens', 'completion_tokens')
+            container = result.get('usage') if isinstance(result.get('usage'), dict) else {}
+        result_model = result.get('model', '')
         reported = []
-        for key in ('prompt_eval_count', 'eval_count'):
-            value = result.get(key)
+        for key in keys:
+            value = container.get(key)
             reported.append(value if type(value) is int and 0 <= value <= 10**12 else None)
         elapsed = round((time.monotonic() - started) * 1000)
     except (OSError, ValueError, TypeError, TimeoutError, http.client.HTTPException):
@@ -101,15 +121,15 @@ def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
         data = bakeoff.load(path)
         stored = next(x for x in data['attempts'] if x['id'] == attempt['id'])
         if task_id in data['results'].get(model, {}):
-            stored.update({'status': 'completed_conflict', 'answer': result['response']})
+            stored.update({'status': 'completed_conflict', 'answer': answer})
             bakeoff.save(path, data)
             raise ValueError('A result was recorded concurrently; generated answer was retained in the private attempt')
-        passed = result['response'] == task['expected'] if task['check'] == 'exact' else task['expected'] in result['response']
-        data['results'].setdefault(model, {})[task_id] = {'answer': result['response'], 'passed': passed, 'latency_ms': elapsed,
-            'input_tokens': reported[0], 'output_tokens': reported[1], 'origin': 'local_ollama',
-            'reported_model': str(result.get('model', ''))[:200], 'seed': seed}
+        passed = answer == task['expected'] if task['check'] == 'exact' else task['expected'] in answer
+        data['results'].setdefault(model, {})[task_id] = {'answer': answer, 'passed': passed, 'latency_ms': elapsed,
+            'input_tokens': reported[0], 'output_tokens': reported[1], 'origin': 'local_ollama' if api == 'ollama' else 'local_openai_compatible',
+            'reported_model': str(result_model)[:200], 'seed': seed}
         stored['status'] = 'complete'
         bakeoff.save(path, data)
     return {'model': model, 'task_id': task_id, 'passed': passed, 'latency_ms': elapsed,
-            'input_tokens': reported[0], 'output_tokens': reported[1], 'provider_reported_model': str(result.get('model', ''))[:200],
-            'notice': 'One local generation was performed. Matching a literal check does not establish general quality.'}
+            'input_tokens': reported[0], 'output_tokens': reported[1], 'provider_reported_model': str(result_model)[:200],
+            'notice': 'One local generation was performed through the ' + ('Ollama' if api == 'ollama' else 'OpenAI-compatible') + ' API. Matching a literal check does not establish general quality.'}
