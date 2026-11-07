@@ -1,10 +1,10 @@
 """Record external model responses against an immutable deterministic task set."""
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import uuid
+from . import locking
 
 
 def bounded(value, label, limit, empty=False):
@@ -64,8 +64,7 @@ class Bakeoff:
         for value in (latency_ms, input_tokens, output_tokens):
             if value is not None and (type(value) is not int or not 0 <= value <= 10**12):
                 raise ValueError('Latency and token counts must be nonnegative integers')
-        with (self.root / '.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with locking.exclusive_lock(self.root / '.lock', 'Benchmark state is busy', blocking=True):
             path = self.path(bakeoff_id)
             data = self.load(path)
             task = next((x for x in data['tasks'] if x['id'] == task_id), None)
@@ -81,8 +80,7 @@ class Bakeoff:
         bounded(task_id, 'task ID', 100)
         bounded(model, 'model label', 200)
         bounded(note, 'reason', 1000)
-        with (self.root / '.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with locking.exclusive_lock(self.root / '.lock', 'Benchmark state is busy', blocking=True):
             path = self.path(bakeoff_id)
             data = self.load(path)
             matches = [x for x in data.get('attempts', []) if x['model'] == model and x['task_id'] == task_id and x['status'] == 'unknown']
@@ -94,11 +92,8 @@ class Bakeoff:
     def recover_pending(self, bakeoff_id):
         path = self.path(bakeoff_id)
         if not path.is_file(): raise ValueError('Unknown bakeoff')
-        with (self.root / (bakeoff_id + '.run.lock')).open('a') as active:
-            try: fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError: raise ValueError('A local model run is still active') from None
-            with (self.root / '.lock').open('a') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+        with locking.exclusive_lock(self.root / (bakeoff_id + '.run.lock'), 'A local model run is still active', error=ValueError):
+            with locking.exclusive_lock(self.root / '.lock', 'Benchmark state is busy', blocking=True):
                 data = self.load(path)
                 pending = [x for x in data.get('attempts', []) if x['status'] == 'pending']
                 if len(pending) != 1 or pending[0].get('lock_version') != 1:

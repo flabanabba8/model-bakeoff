@@ -6,9 +6,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location('bakeoff_core', Path(__file__).parents[1] / 'core.py')
-core = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(core)
+import sys
+root = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('bakeoff_core_fixture', root/'__init__.py', submodule_search_locations=[str(root)])
+plugin = importlib.util.module_from_spec(spec);sys.modules[spec.name]=plugin;spec.loader.exec_module(plugin)
+core = plugin.core
 
 class BakeoffTests(unittest.TestCase):
     def setUp(self):

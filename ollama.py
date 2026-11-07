@@ -1,5 +1,4 @@
 """One explicit local Ollama inference at a time with durable outcome receipts."""
-import fcntl
 import http.client
 import ipaddress
 import json
@@ -8,6 +7,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 from .core import Bakeoff, bounded
+from . import locking
 
 
 def local_endpoint(value):
@@ -47,9 +47,7 @@ class LoopbackConnection(http.client.HTTPConnection):
 def execute(bakeoff, bakeoff_id, task_id, model, base_url='http://localhost:11434', seed=0):
     path = bakeoff.path(bakeoff_id)  # Validate before using the ID in a lock filename.
     if not path.is_file(): raise ValueError('Unknown bakeoff')
-    with (bakeoff.root / (bakeoff_id + '.run.lock')).open('a') as lock:
-        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError: raise ValueError('Another local model run is active for this bakeoff') from None
+    with locking.exclusive_lock(bakeoff.root / (bakeoff_id + '.run.lock'), 'Another local model run is active for this bakeoff', error=ValueError):
         return _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed)
 
 
@@ -59,8 +57,7 @@ def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
     if type(seed) is not int or not 0 <= seed <= 2**31-1: raise ValueError('Seed must be a nonnegative 32-bit integer')
     host, port = local_endpoint(base_url)
     path = bakeoff.path(bakeoff_id)
-    with (bakeoff.root / '.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with locking.exclusive_lock(bakeoff.root / '.lock', 'Benchmark state is busy', blocking=True):
         data = bakeoff.load(path)
         task = next((x for x in data['tasks'] if x['id'] == task_id), None)
         if task is None: raise ValueError('Unknown task')
@@ -95,14 +92,12 @@ def _execute(bakeoff, bakeoff_id, task_id, model, base_url, seed):
             reported.append(value if type(value) is int and 0 <= value <= 10**12 else None)
         elapsed = round((time.monotonic() - started) * 1000)
     except (OSError, ValueError, TypeError, TimeoutError, http.client.HTTPException):
-        with (bakeoff.root / '.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with locking.exclusive_lock(bakeoff.root / '.lock', 'Benchmark state is busy', blocking=True):
             data = bakeoff.load(path)
             next(x for x in data['attempts'] if x['id'] == attempt['id'])['status'] = 'unknown'
             bakeoff.save(path, data)
         raise RuntimeError('Local model request failed or its outcome is unknown; no automatic retry was made') from None
-    with (bakeoff.root / '.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with locking.exclusive_lock(bakeoff.root / '.lock', 'Benchmark state is busy', blocking=True):
         data = bakeoff.load(path)
         stored = next(x for x in data['attempts'] if x['id'] == attempt['id'])
         if task_id in data['results'].get(model, {}):
